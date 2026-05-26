@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#121212">
+    <title>WacTac Pro</title>
+
+    <!-- EL NUEVO MOTOR: Centralita Pública Mundial (MQTT) -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+    <style>
+        /* TU DISEÑO ORIGINAL */
+        :root { --bg-main: #121212; --bg-card: #1e1e1e; --bg-active: #2d2d2d; --text-main: #f0f0f0; --text-muted: #a0a0a0; --accent-active: #ffffff; --status-online: #2ecc71; --status-talking: #e74c3c; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background-color: var(--bg-main); color: var(--text-main); display: flex; flex-direction: column; height: 100vh; overflow: hidden; user-select: none; }
+        header { background-color: var(--bg-card); padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--bg-active); }
+        header h1 { font-size: 1.3rem; font-weight: 700; }
+        .context-tabs { display: flex; background-color: var(--bg-main); padding: 4px; border-radius: 8px; border: 1px solid var(--bg-active); }
+        .tab-btn { background: none; border: none; color: var(--text-muted); padding: 6px 12px; font-size: 0.85rem; font-weight: 600; border-radius: 6px; cursor: pointer; }
+        .tab-btn.active { background-color: var(--bg-active); color: var(--accent-active); }
+        .channel-bar { display: flex; align-items: center; background-color: #161616; padding: 0 10px; border-bottom: 1px solid rgba(255,255,255,0.02); }
+        .channel-selector { display: flex; gap: 10px; padding: 12px 10px; overflow-x: auto; white-space: nowrap; flex: 1; }
+        .channel-selector::-webkit-scrollbar { display: none; }
+        .channel-pill { background-color: var(--bg-card); color: var(--text-muted); padding: 8px 16px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
+        .channel-pill.active { background-color: var(--bg-active); color: var(--accent-active); border-color: rgba(255,255,255,0.1); }
+        .add-channel-btn { background: none; border: none; color: var(--text-muted); font-size: 1.5rem; padding: 0 15px; cursor: pointer; }
+        .mode-selector { display: flex; background-color: var(--bg-card); margin: 15px 20px 5px 20px; padding: 4px; border-radius: 12px; }
+        .mode-btn { flex: 1; background: none; border: none; color: var(--text-muted); padding: 12px; font-size: 0.9rem; font-weight: 600; border-radius: 10px; cursor: pointer; }
+        .mode-btn.active { background-color: var(--bg-active); color: var(--accent-active); box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+        .main-action-area { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 10px 20px; }
+        .ptt-container { position: relative; width: 220px; height: 220px; display: flex; justify-content: center; align-items: center; }
+        .ptt-button { width: 210px; height: 210px; border-radius: 50%; background: linear-gradient(145deg, #222222, #181818); border: 5px solid var(--bg-active); color: var(--text-main); font-size: 1.1rem; font-weight: 700; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; cursor: pointer; touch-action: none; transition: all 0.15s ease; box-shadow: 0 12px 30px rgba(0,0,0,0.7); }
+        .ptt-button.transmitting { border-color: var(--status-talking); box-shadow: 0 0 40px rgba(231, 76, 60, 0.4); background: linear-gradient(145deg, #2a1a1a, #1a1212); }
+        .ptt-button svg { width: 42px; height: 42px; fill: currentColor; }
+        .ptt-button.transmitting svg { transform: scale(1.1); color: var(--status-talking); }
+        .status-text { margin-top: 20px; font-size: 0.95rem; font-weight: 500; color: var(--text-muted); }
+        .roster-panel { background-color: var(--bg-card); padding: 20px; height: 200px; display: flex; flex-direction: column; border-top: 1px solid var(--bg-active); }
+        .roster-header { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; }
+        .member-list { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; flex: 1; }
+        .member-item { display: flex; align-items: center; justify-content: space-between; font-size: 0.95rem; }
+        .member-info { display: flex; align-items: center; gap: 10px; }
+        .status-dot { width: 8px; height: 8px; background-color: var(--status-online); border-radius: 50%; }
+        .status-dot.talking { background-color: var(--status-talking); animation: pulse 0.8s infinite alternate; }
+        .member-status { font-size: 0.85rem; color: var(--text-muted); }
+        .member-status.talking { color: var(--status-talking); font-weight: 600; }
+        
+        /* Modal */
+        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 1000; padding: 20px; }
+        .modal.open { opacity: 1; pointer-events: auto; }
+        .modal-content { background: var(--bg-card); padding: 25px; border-radius: 16px; width: 100%; max-width: 400px; border: 1px solid var(--bg-active); }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content input { width: 100%; padding: 12px; background: var(--bg-main); border: 1px solid var(--bg-active); color: var(--text-main); border-radius: 8px; margin-bottom: 20px; font-size: 1rem; outline: none; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-btn { padding: 10px 20px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; border: none; cursor: pointer; }
+        .modal-btn.cancel { background: none; color: var(--text-muted); }
+        .modal-btn.confirm { background: var(--text-main); color: var(--bg-main); }
+        @keyframes pulse { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.3); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>WacTac Pro</h1>
+        <div class="context-tabs">
+            <button class="tab-btn active" id="tabWork" onclick="switchContext('work')">Profesional</button>
+            <button class="tab-btn" id="tabPersonal" onclick="switchContext('personal')">Social</button>
+        </div>
+    </header>
+
+    <div class="channel-bar">
+        <div class="channel-selector" id="channelContainer"></div>
+        <button class="add-channel-btn" onclick="openModal()">+</button>
+    </div>
+
+    <div class="mode-selector">
+        <button class="mode-btn active" id="btnModeWalkie" onclick="setMode('walkie')">Modo Walkie (Pulsar)</button>
+        <button class="mode-btn" id="btnModeOpen" onclick="setMode('open')">Modo Abierto (Tocar)</button>
+    </div>
+
+    <div class="main-action-area">
+        <div class="ptt-container">
+            <div class="ptt-button" id="pttMainButton">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+                </svg>
+                <span id="buttonLabel">MANTENER</span>
+            </div>
+        </div>
+        <div class="status-text" id="statusText">Toca la pantalla para activar</div>
+    </div>
+
+    <div class="roster-panel">
+        <div class="roster-header">
+            <span>Últimos conectados</span>
+            <span id="channelNameDisplay">-</span>
+        </div>
+        <div class="member-list" id="memberListContainer"></div>
+    </div>
+
+    <div class="modal" id="channelModal">
+        <div class="modal-content">
+            <h3>Crear Nuevo Canal</h3>
+            <input type="text" id="newChannelInput" placeholder="Ej. Equipo, Viaje...">
+            <div class="modal-actions">
+                <button class="modal-btn cancel" onclick="closeModal()">Cancelar</button>
+                <button class="modal-btn confirm" onclick="createNewChannel()">Crear</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. DATOS Y VARIABLES
+        // ==========================================
+        let channelsData = JSON.parse(localStorage.getItem('wactac_channels')) || {
+            work: { default: '#General', list: ['#General', '#Operaciones'] },
+            personal: { default: '#Familia', list: ['#Familia', '#Amigos'] }
+        };
+
+        let currentContext = 'work'; 
+        let activeChannel = channelsData[currentContext].default;
+        
+        let isRecording = false;
+        let myName = "Usuario_" + Math.floor(Math.random() * 9000); 
+        let peersList = {}; 
+
+        // Variables de Audio y Servidor Centralita
+        let mediaRecorder;
+        let audioChunks = [];
+        let mqttClient = null;
+        const PREFIX = "wactac-app-global/"; // Código secreto único para tu app
+
+        // ==========================================
+        // 2. CONEXIÓN AL SERVIDOR CENTRALITA (MQTT)
+        // ==========================================
+        function connectToServer() {
+            if (mqttClient) return;
+            
+            document.getElementById('statusText').innerText = "Conectando al servidor mundial...";
+            
+            // Nos conectamos a un broker público, seguro y rápido
+            mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+
+            mqttClient.on('connect', () => {
+                document.getElementById('statusText').innerText = "Modo Walkie: Mantén pulsado y habla";
+                joinChannel(activeChannel);
+            });
+
+            // Cuando recibimos un mensaje (Voz de alguien o aviso de conexión)
+            mqttClient.on('message', (topic, payload) => {
+                const data = JSON.parse(payload.toString());
+                
+                // Si el mensaje es mío, lo ignoro (ya sé lo que he dicho)
+                if (data.user === myName) return;
+
+                // Añadimos a esta persona a la lista
+                peersList[data.user] = { name: data.user, status: 'Hablando...' };
+                renderRoster();
+
+                // Si es un mensaje de audio, lo reproducimos
+                if (data.type === 'audio') {
+                    playAudioBase64(data.audioData, data.user);
+                } else if (data.type === 'join') {
+                    peersList[data.user].status = 'Escuchando';
+                    renderRoster();
+                }
+            });
+        }
+
+        function joinChannel(channelName) {
+            if (!mqttClient) return;
+            
+            // Salimos del canal viejo
+            mqttClient.unsubscribe(PREFIX + activeChannel);
+            peersList = {}; // Limpiamos la pantalla
+            
+            // Entramos al canal nuevo
+            activeChannel = channelName;
+            document.getElementById('channelNameDisplay').innerText = channelName;
+            mqttClient.subscribe(PREFIX + activeChannel);
+            
+            // Avisamos a los demás que hemos entrado
+            mqttClient.publish(PREFIX + activeChannel, JSON.stringify({ type: 'join', user: myName }));
+            renderRoster();
+        }
+
+        // ==========================================
+        // 3. GRABAR Y ENVIAR AUDIO
+        // ==========================================
+        async function initMicrophone() {
+            if (mediaRecorder) return true;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+
+                // Cuando el micrófono va grabando la voz, la guardamos en trocitos
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                // ¡LA CLAVE! CUANDO SUELTAS EL BOTÓN (se para de grabar y se envía)
+                mediaRecorder.onstop = async () => {
+                    document.getElementById('pttMainButton').classList.remove('transmitting');
+                    
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    audioChunks = []; // Limpiamos para el próximo mensaje
+
+                    // Convertimos el audio a texto (Base64) para poder enviarlo por internet
+                    const reader = new FileReader();
+                    reader.readAsDataURL(audioBlob);
+                    reader.onloadend = () => {
+                        const base64Audio = reader.result;
+                        // ¡Fuego! Disparamos el audio a la Centralita
+                        mqttClient.publish(PREFIX + activeChannel, JSON.stringify({
+                            type: 'audio',
+                            user: myName,
+                            audioData: base64Audio
+                        }));
+                    };
+                };
+                return true;
+            } catch (error) {
+                document.getElementById('statusText').innerText = "Error: Permite el uso del micrófono";
+                return false;
+            }
+        }
+
+        function startRecording() {
+            if (isRecording) return;
+            isRecording = true;
+            document.getElementById('pttMainButton').classList.add('transmitting');
+            
+            // Borramos grabaciones viejas y empezamos a grabar
+            audioChunks = [];
+            mediaRecorder.start();
+        }
+
+        function stopRecording() {
+            if (!isRecording) return;
+            isRecording = false;
+            // Al hacer "stop()", automáticamente se activa el código de arriba y envía el mensaje
+            mediaRecorder.stop();
+        }
+
+        // ==========================================
+        // 4. REPRODUCIR EL AUDIO RECIBIDO
+        // ==========================================
+        function playAudioBase64(base64String, userName) {
+            // Convertimos el texto recibido de vuelta a un archivo de audio
+            fetch(base64String)
+                .then(res => res.blob())
+                .then(blob => {
+                    const audioUrl = URL.createObjectURL(blob);
+                    const audio = new Audio(audioUrl);
+                    
+                    // Cuando empieza a sonar, ponemos sus letras en rojo
+                    audio.play();
+                    
+                    // Cuando termina de sonar, lo volvems a poner en "Escuchando"
+                    audio.onended = () => {
+                        if(peersList[userName]) peersList[userName].status = 'Escuchando';
+                        renderRoster();
+                    };
+                });
+        }
+
+        // ==========================================
+        // 5. CONTROLES DEL BOTÓN (UI)
+        // ==========================================
+        function setMode(mode) {
+            const pttBtn = document.getElementById('pttMainButton');
+            pttBtn.onmousedown = null; pttBtn.onmouseup = null; pttBtn.onmouseleave = null;
+            pttBtn.ontouchstart = null; pttBtn.ontouchend = null; pttBtn.ontouchcancel = null;
+
+            if (mode === 'walkie') {
+                document.getElementById('buttonLabel').innerText = "MANTENER";
+                pttBtn.onmousedown = startRecording;
+                pttBtn.onmouseup = stopRecording;
+                pttBtn.onmouseleave = stopRecording;
+                pttBtn.ontouchstart = (e) => { e.preventDefault(); startRecording(); };
+                pttBtn.ontouchend = (e) => { e.preventDefault(); stopRecording(); };
+                pttBtn.ontouchcancel = (e) => { e.preventDefault(); stopRecording(); };
+            } else {
+                // Modo Abierto: Tocas una vez para grabar, otra para enviar
+                document.getElementById('buttonLabel').innerText = "TOCAR Y HABLAR";
+                pttBtn.ontouchstart = (e) => {
+                    e.preventDefault();
+                    if (!isRecording) {
+                        startRecording();
+                        document.getElementById('buttonLabel').innerText = "TOCAR PARA ENVIAR";
+                    } else {
+                        stopRecording();
+                        document.getElementById('buttonLabel').innerText = "TOCAR Y HABLAR";
+                    }
+                };
+            }
+            document.getElementById('btnModeWalkie').classList.toggle('active', mode === 'walkie');
+            document.getElementById('btnModeOpen').classList.toggle('active', mode === 'open');
+        }
+
+        // ==========================================
+        // 6. DIBUJAR PANTALLA Y MENÚS
+        // ==========================================
+        function renderRoster() {
+            const container = document.getElementById('memberListContainer');
+            container.innerHTML = '';
+            
+            // Dibujarme a mí mismo
+            container.innerHTML += `
+                <div class="member-item">
+                    <div class="member-info">
+                        <div class="status-dot ${isRecording ? 'talking' : ''}"></div>
+                        <span>Tú (${myName})</span>
+                    </div>
+                    <span class="member-status ${isRecording ? 'talking' : ''}">${isRecording ? 'Hablando...' : 'Listo'}</span>
+                </div>
+            `;
+
+            // Dibujar a los demás
+            Object.values(peersList).forEach(peer => {
+                const isTalking = peer.status === 'Hablando...';
+                container.innerHTML += `
+                    <div class="member-item">
+                        <div class="member-info">
+                            <div class="status-dot ${isTalking ? 'talking' : ''}"></div>
+                            <span>${peer.name}</span>
+                        </div>
+                        <span class="member-status ${isTalking ? 'talking' : ''}">${peer.status}</span>
+                    </div>
+                `;
+            });
+        }
+
+        function renderChannels() {
+            const container = document.getElementById('channelContainer');
+            container.innerHTML = '';
+            channelsData[currentContext].list.forEach(channel => {
+                const pill = document.createElement('div');
+                pill.className = `channel-pill ${channel === activeChannel ? 'active' : ''}`;
+                pill.innerText = channel;
+                pill.onclick = () => {
+                    channelsData[currentContext].default = channel;
+                    localStorage.setItem('wactac_channels', JSON.stringify(channelsData));
+                    joinChannel(channel);
+                    renderChannels();
+                };
+                container.appendChild(pill);
+            });
+        }
+
+        function switchContext(context) {
+            currentContext = context;
+            document.getElementById('tabWork').classList.toggle('active', context === 'work');
+            document.getElementById('tabPersonal').classList.toggle('active', context === 'personal');
+            renderChannels();
+            joinChannel(channelsData[context].default || channelsData[context].list[0]);
+        }
+
+        // Modal de Grupos
+        function openModal() { document.getElementById('channelModal').classList.add('open'); document.getElementById('newChannelInput').focus(); }
+        function closeModal() { document.getElementById('channelModal').classList.remove('open'); document.getElementById('newChannelInput').value = ''; }
+        function createNewChannel() {
+            let name = document.getElementById('newChannelInput').value.trim();
+            if(!name) return;
+            if(!name.startsWith('#')) name = '#' + name;
+            name = name.replace(/\s+/g, '-'); 
+            if(!channelsData[currentContext].list.includes(name)) {
+                channelsData[currentContext].list.push(name);
+                localStorage.setItem('wactac_channels', JSON.stringify(channelsData));
+                renderChannels();
+                joinChannel(name);
+            }
+            closeModal();
+        }
+
+        // ¡IMPORTANTE! Iniciar todo al tocar la pantalla
+        document.body.addEventListener('click', async () => { 
+            const micOk = await initMicrophone();
+            if (micOk) connectToServer();
+        }, { once: true });
+        
+        renderChannels();
+        setMode('walkie');
+    </script>
+</body>
+</html>
